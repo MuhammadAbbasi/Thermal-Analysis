@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import OUTPUTS_DIR
+from app.database import init_db
 from app.layout_mapper import LayoutStore
 from app.models import (
     DefectRecord,
@@ -30,9 +31,12 @@ from app.models import (
     ScanRequest,
     ScanResponse,
 )
+from app.plant_router import router as plant_router
+from app import state
 from app.tracker_pipeline import _find_images, run_pipeline
 
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
+init_db()
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -50,10 +54,12 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+app.include_router(plant_router)
 
-# In-memory state (cleared on restart)
-_scan_store: Dict[str, ScanResponse] = {}
-_layout_store: Optional[LayoutStore] = None
+# Aliases to shared state (backwards compat for existing helpers)
+def _get_scan_store():      return state.scan_store
+def _get_layout_store():    return state.layout_store
+def _set_layout_store(v):   state.layout_store = v
 
 
 # ---------------------------------------------------------------------------
@@ -86,13 +92,13 @@ def serve_ui():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "layout_loaded": _layout_store is not None and len(_layout_store.panels) > 0}
+    return {"status": "ok", "layout_loaded": state.layout_store is not None and len(state.layout_store.panels) > 0}
 
 
 @app.get("/scans")
 def list_scans():
     """Return all scan IDs currently held in memory."""
-    return list(_scan_store.keys())
+    return list(state.scan_store.keys())
 
 
 # ── Plant layout endpoints ──────────────────────────────────────────────────
@@ -266,7 +272,6 @@ def get_center(path: str):
 @app.post("/scan", response_model=ScanResponse)
 def scan(req: ScanRequest):
     """Stage 1: YOLO detection + ByteTrack + geolocation."""
-    global _scan_store
     try:
         defects = run_pipeline(
             directory=req.path,
@@ -291,14 +296,13 @@ def scan(req: ScanRequest):
         defects_found=len(defects),
         defects=defects,
     )
-    _scan_store[scan_id] = resp
+    state.scan_store[scan_id] = resp
     return resp
 
 
 @app.post("/upload-layout")
 async def upload_layout(file: UploadFile = File(...)):
     """Upload a GeoJSON or CSV panel layout file. Replaces any previously loaded layout."""
-    global _layout_store
     content = await file.read()
     filename = file.filename or ""
     store = LayoutStore()
@@ -309,36 +313,28 @@ async def upload_layout(file: UploadFile = File(...)):
             n = store.load_geojson(content)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Failed to parse layout: {exc}")
-    _layout_store = store
+    state.layout_store = store
     return {"panels_loaded": n, "filename": filename}
 
 
 @app.post("/map/{scan_id}", response_model=ScanResponse)
 def map_layout(scan_id: str):
     """Apply the currently loaded layout to an existing scan, assigning panel IDs to defects."""
-    if scan_id not in _scan_store:
+    if scan_id not in state.scan_store:
         raise HTTPException(status_code=404, detail=f"Scan '{scan_id}' not found.")
-    if _layout_store is None or not _layout_store.panels:
+    if state.layout_store is None or not state.layout_store.panels:
         raise HTTPException(status_code=422, detail="No layout loaded. POST /upload-layout first.")
 
-    updated_scan = _scan_store[scan_id].model_copy(update={
-        "defects": _apply_layout(_scan_store[scan_id].defects, _layout_store)
+    updated_scan = state.scan_store[scan_id].model_copy(update={
+        "defects": _apply_layout(state.scan_store[scan_id].defects, state.layout_store)
     })
-    _scan_store[scan_id] = updated_scan
+    state.scan_store[scan_id] = updated_scan
     return updated_scan
 
 
 @app.post("/pipeline", response_model=ScanResponse)
 def full_pipeline(req: FullPipelineRequest):
-    """
-    Run Stage 1 + Stage 2 in one call.
-
-    If `layout_path` is provided in the request body (local file path to a
-    GeoJSON or CSV), it is loaded before matching. Otherwise the previously
-    uploaded layout (via /upload-layout) is used if available.
-    """
-    global _layout_store
-
+    """Stage 1 + Stage 2 in one call. layout_path optional in request body."""
     # Stage 1
     try:
         defects = run_pipeline(
@@ -357,7 +353,6 @@ def full_pipeline(req: FullPipelineRequest):
     except Exception:
         n_frames = 0
 
-    # Stage 2 — optionally load layout from path given in request
     if req.layout_path:
         try:
             with open(req.layout_path, "rb") as f:
@@ -367,12 +362,12 @@ def full_pipeline(req: FullPipelineRequest):
                 store.load_csv(content)
             else:
                 store.load_geojson(content)
-            _layout_store = store
+            state.layout_store = store
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Failed to load layout_path: {exc}")
 
-    if _layout_store is not None and _layout_store.panels:
-        defects = _apply_layout(defects, _layout_store)
+    if state.layout_store is not None and state.layout_store.panels:
+        defects = _apply_layout(defects, state.layout_store)
 
     scan_id = str(uuid.uuid4())[:8]
     resp = ScanResponse(
@@ -381,12 +376,12 @@ def full_pipeline(req: FullPipelineRequest):
         defects_found=len(defects),
         defects=defects,
     )
-    _scan_store[scan_id] = resp
+    state.scan_store[scan_id] = resp
     return resp
 
 
 @app.get("/results/{scan_id}", response_model=ScanResponse)
 def get_results(scan_id: str):
-    if scan_id not in _scan_store:
+    if scan_id not in state.scan_store:
         raise HTTPException(status_code=404, detail=f"Scan '{scan_id}' not found.")
-    return _scan_store[scan_id]
+    return state.scan_store[scan_id]

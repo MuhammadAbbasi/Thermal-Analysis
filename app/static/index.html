@@ -143,6 +143,27 @@
     .lg-sq    { width: 13px; height: 7px; border-radius: 2px; opacity: .75; flex-shrink: 0; }
     .lg-sep   { height: 1px; background: var(--border); margin: 6px 0; }
 
+    /* Campaign / WMS badges */
+    .camp-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:.65rem; font-weight:600; letter-spacing:.02em; }
+    .camp-badge.aperta   { background:rgba(99,102,241,.2);  color:var(--accent); }
+    .camp-badge.validata { background:rgba(34,197,94,.2);   color:var(--ok); }
+    .camp-badge.chiusa   { background:rgba(139,149,169,.15); color:var(--dim); }
+    .grav-alta    { color:#ef4444; }
+    .grav-critica { color:#dc2626; font-weight:700; }
+    .grav-media   { color:#f97316; }
+    .grav-bassa   { color:#3b82f6; }
+    .fld select, .fld-select {
+      width:100%; background:var(--surface); border:1px solid var(--border); border-radius:5px;
+      color:var(--text); padding:6px 9px; font-size:.78rem; font-family:inherit;
+    }
+    .fld-input {
+      width:100%; background:var(--surface); border:1px solid var(--border); border-radius:5px;
+      color:var(--text); padding:6px 9px; font-size:.78rem; font-family:ui-monospace,monospace;
+    }
+    .fld-input:focus, .fld-select:focus { outline:none; border-color:var(--accent); }
+    .its-stat { display:flex; justify-content:space-between; font-size:.73rem; padding:3px 0; border-bottom:1px solid rgba(255,255,255,.04); }
+    .its-stat:last-child { border-bottom:none; }
+
     /* Collapsible cards */
     .card-hd.toggleable { cursor: pointer; user-select: none; }
     .card-hd.toggleable .t-arr { margin-left: auto; font-size: 0.72rem; color: var(--dim); transition: transform .18s; display: inline-block; }
@@ -240,6 +261,72 @@
           <div id="layout-info" style="margin-top:8px;display:none">
             <div class="info-row">✅ <span id="lfile">—</span></div>
             <div class="info-row">📐 <span id="lpanels">—</span> panels loaded</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WMS Thermal Layers -->
+      <div class="card collapsed">
+        <div class="card-hd toggleable" onclick="toggleCard(this)">🌡 WMS Thermal<span class="t-arr">▾</span></div>
+        <div class="card-bd">
+          <div id="wms-list" style="margin-bottom:8px;min-height:14px;"></div>
+          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:5px;">
+            <div class="fld" style="margin:0"><label>Name</label>
+              <input type="text" id="wms-nome" class="fld-input" placeholder="Campaign 2026-05"></div>
+            <div class="fld" style="margin:0"><label>WMS URL</label>
+              <input type="text" id="wms-url" class="fld-input" placeholder="https://server/geoserver/wms"></div>
+            <div class="fld" style="margin:0"><label>Layer name</label>
+              <input type="text" id="wms-layer" class="fld-input" placeholder="workspace:layer_name"></div>
+            <div class="range-row">
+              <label style="font-size:.7rem;color:var(--dim);white-space:nowrap">Opacity</label>
+              <input type="range" id="wms-opac" min="0.1" max="1" step="0.05" value="0.75"
+                     oninput="document.getElementById('vwms-opac').textContent=parseFloat(this.value).toFixed(2)">
+              <span class="rval" id="vwms-opac">0.75</span>
+            </div>
+            <button class="btn btn-primary" onclick="addWmsLayer()">+ Add WMS Layer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Campaigns -->
+      <div class="card collapsed">
+        <div class="card-hd toggleable" onclick="toggleCard(this)">
+          📅 Campaigns
+          <span class="badge" id="camp-badge" style="display:none">0</span>
+          <span class="t-arr">▾</span>
+        </div>
+        <div class="card-bd" style="display:flex;flex-direction:column;gap:7px;">
+          <div class="fld" style="margin:0">
+            <label>Active Campaign</label>
+            <select id="camp-select" class="fld-select" onchange="onCampaignSelect()">
+              <option value="">— select or create —</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:5px;">
+            <button class="btn btn-sm" style="flex:1" onclick="toggleCampCreate()">+ New</button>
+            <button class="btn btn-sm" style="flex:1" onclick="importScanToCampaign()" title="Import last scan into campaign">↑ Import scan</button>
+          </div>
+          <div id="camp-stats" style="display:none;font-size:.72rem;color:var(--dim)"></div>
+          <div id="camp-create-form" style="display:none">
+            <div style="display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--border);padding-top:7px;">
+              <div class="fld" style="margin:0"><label>Data rilievo</label>
+                <input type="date" id="camp-date" class="fld-input"></div>
+              <div class="fld" style="margin:0"><label>Operatore</label>
+                <input type="text" id="camp-op" class="fld-input" placeholder="Nome operatore"></div>
+              <div class="fld" style="margin:0"><label>Strumento</label>
+                <input type="text" id="camp-strumento" class="fld-input" placeholder="DJI Zenmuse XT2"></div>
+              <div style="display:flex;gap:5px;">
+                <div class="fld" style="margin:0;flex:1"><label>Irrag. W/m²</label>
+                  <input type="number" id="camp-irrag" class="fld-input" placeholder="800"></div>
+                <div class="fld" style="margin:0;flex:1"><label>T. amb. °C</label>
+                  <input type="number" id="camp-temp" class="fld-input" placeholder="25"></div>
+              </div>
+              <div class="fld" style="margin:0"><label>Meteo</label>
+                <input type="text" id="camp-meteo" class="fld-input" placeholder="Sereno, vento &lt; 5 m/s"></div>
+              <div class="fld" style="margin:0"><label>Note</label>
+                <input type="text" id="camp-note" class="fld-input" placeholder="..."></div>
+              <button class="btn btn-primary" onclick="createCampaign()">✓ Create Campaign</button>
+            </div>
           </div>
         </div>
       </div>
@@ -571,6 +658,8 @@ map.on('load', () => {
 
   loadPlantLayout();
   autoCenter();
+  loadWmsLayers();
+  loadCampaigns();
 });
 
 /* ── Utilities ──────────────────────────────────────────────────────────────── */
@@ -788,12 +877,38 @@ function buildDefectPopup(d) {
 }
 
 function buildZonePopup(p) {
+  const itsId   = p.id || '';
+  const anCount = _itsAnomalyCount[itsId] || 0;
+  const anBadge = anCount > 0
+    ? `<span style="background:rgba(239,68,68,.18);color:#ef4444;padding:1px 7px;border-radius:10px;font-size:.68rem;font-weight:600;margin-left:6px">${anCount} anomal${anCount===1?'y':'ies'}</span>`
+    : '';
   return `
-    <div class="pu-title">${p.name || 'ITS Zone'}</div>
+    <div class="pu-title">${p.name || 'ITS Zone'}${anBadge}</div>
+    <div class="pu-row"><span class="pu-key">ID</span>            <span class="pu-val">${itsId}</span></div>
     <div class="pu-row"><span class="pu-key">Modules</span>       <span class="pu-val">${(p.total_modules||0).toLocaleString()}</span></div>
     <div class="pu-row"><span class="pu-key">Strings (~)</span>   <span class="pu-val">${p.est_strings||'—'}</span></div>
     <div class="pu-row"><span class="pu-key">DC Combiners</span>  <span class="pu-val">${p.dc_combiners||'—'}</span></div>
-    <div class="pu-row"><span class="pu-key">Table config</span>  <span class="pu-val" style="font-size:.65rem">${p.table_config||'—'}</span></div>`;
+    <div class="pu-row"><span class="pu-key">Table config</span>  <span class="pu-val" style="font-size:.65rem">${p.table_config||'—'}</span></div>
+    ${anCount > 0 ? `<button class="btn btn-primary" style="margin-top:9px;font-size:.72rem;padding:5px 0;" onclick="filterByIts('${itsId}')">🔍 Show anomalies</button>` : ''}`;
+}
+
+function filterByIts(itsId) {
+  if (!defects.length) return;
+  const filtered = defects.filter(d => d.layout_mapping?.matched_panel_id === itsId);
+  if (!filtered.length) { toast(`No anomalies for ${itsId}`, 'info'); return; }
+  defects = filtered;
+  renderList();
+  const features = filtered.map(d => ({
+    type: 'Feature',
+    properties: { defect_id: d.defect_id, class_name: d.class_name, confidence: d.confidence, frames_tracked: d.frames_tracked },
+    geometry: { type: 'Point', coordinates: [d.estimated_coordinates.longitude, d.estimated_coordinates.latitude] },
+  }));
+  if (_mapReady) {
+    map.getSource('defects').setData({ type: 'FeatureCollection', features });
+    const b = gjBounds(features);
+    if (b) map.fitBounds(b, { padding: 80 });
+  }
+  toast(`Showing ${filtered.length} anomalies for ${itsId}`, 'info');
 }
 
 /* ── Stats ──────────────────────────────────────────────────────────────────── */
@@ -1054,6 +1169,191 @@ function _stepImg(delta) {
   if (!d) return;
   _imgSourceIdx = Math.max(0, Math.min((d.source_images||[]).length - 1, _imgSourceIdx + delta));
   _renderModalImage(d, _imgSourceIdx);
+}
+
+/* ── WMS Layer Management ────────────────────────────────────────────────────── */
+let _wmsLayerMap = {};   // id → {srcId, lyrId}
+
+async function loadWmsLayers() {
+  try {
+    const r = await fetch(`${API}/wms-layers`);
+    if (!r.ok) return;
+    const layers = await r.json();
+    _renderWmsLayers(layers);
+    if (_mapReady) layers.forEach(l => { if (l.attivo) _addWmsToMap(l); });
+  } catch (_) {}
+}
+
+function _addWmsToMap(lyr) {
+  const srcId = `wms-src-${lyr.id}`;
+  const lyrId = `wms-lyr-${lyr.id}`;
+  if (map.getLayer(lyrId)) return;
+  map.addSource(srcId, {
+    type: 'raster',
+    tiles: [`${lyr.url}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=${encodeURIComponent(lyr.layer_name)}&STYLES=&FORMAT=image%2Fpng&TRANSPARENT=true&WIDTH=256&HEIGHT=256&SRS=EPSG%3A3857&BBOX={bbox-epsg-3857}`],
+    tileSize: 256,
+  });
+  map.addLayer({ id: lyrId, type: 'raster', source: srcId,
+    paint: { 'raster-opacity': lyr.opacita || 0.75 } }, 'defects-circle');
+  _wmsLayerMap[lyr.id] = { srcId, lyrId };
+}
+
+function _removeWmsFromMap(id) {
+  const ids = _wmsLayerMap[id];
+  if (!ids) return;
+  if (map.getLayer(ids.lyrId)) map.removeLayer(ids.lyrId);
+  if (map.getSource(ids.srcId)) map.removeSource(ids.srcId);
+  delete _wmsLayerMap[id];
+}
+
+function _renderWmsLayers(layers) {
+  const el = document.getElementById('wms-list');
+  if (!layers.length) {
+    el.innerHTML = '<div style="font-size:.72rem;color:var(--dim)">No WMS layers configured</div>';
+    return;
+  }
+  el.innerHTML = layers.map(l => `
+    <div style="display:flex;align-items:center;gap:5px;padding:3px 0;font-size:.72rem;">
+      <input type="checkbox" ${l.attivo ? 'checked' : ''} onchange="toggleWms(${l.id},this.checked)" style="accent-color:var(--accent)">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${l.url}">${l.nome || l.layer_name}</span>
+      <button class="btn btn-sm" style="padding:1px 5px;font-size:.65rem" onclick="deleteWms(${l.id})">✕</button>
+    </div>`).join('');
+}
+
+async function toggleWms(id, on) {
+  if (on) {
+    const r = await fetch(`${API}/wms-layers`);
+    const layers = await r.json();
+    const lyr = layers.find(l => l.id === id);
+    if (lyr) _addWmsToMap(lyr);
+  } else {
+    _removeWmsFromMap(id);
+  }
+  await fetch(`${API}/wms-layers/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({attivo: on}) });
+}
+
+async function deleteWms(id) {
+  _removeWmsFromMap(id);
+  await fetch(`${API}/wms-layers/${id}`, { method: 'DELETE' });
+  loadWmsLayers();
+  toast('WMS layer removed', 'info');
+}
+
+async function addWmsLayer() {
+  const nome  = document.getElementById('wms-nome').value.trim();
+  const url   = document.getElementById('wms-url').value.trim();
+  const layer = document.getElementById('wms-layer').value.trim();
+  const opac  = parseFloat(document.getElementById('wms-opac').value || '0.75');
+  if (!url || !layer) { toast('WMS URL and layer name are required', 'err'); return; }
+  try {
+    const r = await fetch(`${API}/wms-layers`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ nome, url, layer_name: layer, opacita: opac }),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    ['wms-nome','wms-url','wms-layer'].forEach(id => document.getElementById(id).value = '');
+    loadWmsLayers();
+    toast('WMS layer added', 'ok');
+  } catch (e) { toast('Failed: ' + e.message, 'err', 6000); }
+}
+
+/* ── Campaign Management ─────────────────────────────────────────────────────── */
+let campaigns = [];
+let activeCampaignId = null;
+let _itsAnomalyCount = {};   // its_id → count (from last campaign load)
+
+async function loadCampaigns() {
+  try {
+    const r = await fetch(`${API}/campagne`);
+    if (!r.ok) return;
+    campaigns = await r.json();
+    _renderCampSelect();
+    const badge = document.getElementById('camp-badge');
+    if (campaigns.length) { badge.textContent = campaigns.length; badge.style.display = ''; }
+  } catch (_) {}
+}
+
+function _renderCampSelect() {
+  const sel = document.getElementById('camp-select');
+  sel.innerHTML = '<option value="">— select or create —</option>' +
+    campaigns.map(c => `<option value="${c.id}">[${c.data_rilievo || '?'}] ${c.id} (${c.stato})</option>`).join('');
+}
+
+function toggleCampCreate() {
+  const f = document.getElementById('camp-create-form');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+async function createCampaign() {
+  const payload = {
+    data_rilievo:  document.getElementById('camp-date').value     || null,
+    operatore:     document.getElementById('camp-op').value.trim()  || null,
+    strumento:     document.getElementById('camp-strumento').value.trim() || null,
+    meteo:         document.getElementById('camp-meteo').value.trim() || null,
+    irraggiamento: parseFloat(document.getElementById('camp-irrag').value) || null,
+    temperatura:   parseFloat(document.getElementById('camp-temp').value)  || null,
+    note:          document.getElementById('camp-note').value.trim() || null,
+  };
+  if (!payload.data_rilievo) { toast('Data rilievo required', 'err'); return; }
+  try {
+    const r = await fetch(`${API}/campagne`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const c = await r.json();
+    toast(`Campaign ${c.id} created`, 'ok');
+    document.getElementById('camp-create-form').style.display = 'none';
+    loadCampaigns();
+  } catch (e) { toast('Error: ' + e.message, 'err'); }
+}
+
+async function onCampaignSelect() {
+  const campId = document.getElementById('camp-select').value;
+  if (!campId) { document.getElementById('camp-stats').style.display = 'none'; return; }
+  activeCampaignId = campId;
+  try {
+    const r = await fetch(`${API}/campagne/${campId}/anomalie`);
+    if (!r.ok) return;
+    const data = await r.json();
+    _itsAnomalyCount = {};
+    for (const a of data) {
+      if (a.id_its) _itsAnomalyCount[a.id_its] = (_itsAnomalyCount[a.id_its] || 0) + 1;
+    }
+    const el = document.getElementById('camp-stats');
+    const c = campaigns.find(x => x.id === campId);
+    const stato = c?.stato || '—';
+    el.innerHTML = `<span class="camp-badge ${stato}">${stato}</span>
+      &nbsp;${data.length} anomal${data.length === 1 ? 'y' : 'ies'}`;
+    el.style.display = '';
+    if (data.length > 0) {
+      const dbDefects = data.map(a => ({
+        defect_id:  a.id,
+        class_name: a.tipo_anomalia,
+        confidence: a.confidenza || 0,
+        frames_tracked: a.frames || 1,
+        estimated_coordinates: { latitude: a.lat, longitude: a.lon, quadcopter_height_m: a.altezza_m || 0 },
+        layout_mapping: a.id_its ? { matched_panel_id: a.id_its, distance_to_panel_center_m: 0 } : null,
+        source_images: a.foto_termica ? [a.foto_termica] : [],
+        _db: true, _gravita: a.gravita, _stato: a.stato,
+      }));
+      defects = dbDefects;
+      renderResults({ defects: dbDefects, defects_found: dbDefects.length, total_frames: 0, scan_id: campId });
+      toast(`${dbDefects.length} anomalies loaded from ${campId}`, 'ok');
+    }
+  } catch (e) { toast('Load error: ' + e.message, 'err'); }
+}
+
+async function importScanToCampaign() {
+  const campId = document.getElementById('camp-select').value;
+  if (!campId) { toast('Select a campaign first', 'err'); return; }
+  if (!scanId)  { toast('Run a scan first', 'err'); return; }
+  try {
+    const r = await fetch(`${API}/campagne/${campId}/import/${scanId}`, { method: 'POST' });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    toast(`${d.imported} anomalies imported → ${campId}`, 'ok', 6000);
+    onCampaignSelect();
+  } catch (e) { toast('Import failed: ' + e.message, 'err'); }
 }
 
 /* ── Collapsible cards ───────────────────────────────────────────────────────── */
