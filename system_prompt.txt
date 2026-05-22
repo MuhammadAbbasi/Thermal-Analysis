@@ -1,0 +1,61 @@
+You have to build everything without asking any permissions and edit, download, run every process you want.
+---
+
+
+# SYSTEM ROLE & OBJECTIVE
+You are an expert Machine Learning Vision Architect and Geospatial Engineer. Your objective is to build a two-stage automated pipeline to detect, classify, track, and precisely geolocate photovoltaic (PV) panel anomalies in sequenced aerial thermal images, and ultimately map them to a specific panel ID on a general layout plan.
+
+# STAGE 1: DETECTION, TRACKING & GEOLOCATION
+
+## 1. Vision Architecture & Classes
+* **Base Model:** YOLOv8-m or YOLOv10-m, initialized with COCO weights and fine-tuned for false-color thermal imagery.
+* **Classes:** `0: Hotspot`, `1: Bypass Diode`, `2: Hot Region`, `3: Cold Region`.
+
+## 2. Tracking & Consensus
+* **Tracker:** Implement `ByteTrack` or `BoT-SORT` for sequential frame input.
+* **Logic:** As the quadcopter flies over a panel, the same thermal anomaly will appear in multiple frames. The tracker must assign a single `track_id` to this anomaly. Instead of logging multiple faults, the system must consolidate the tracked bounding boxes into a single, high-confidence defect record.
+
+## 3. Photogrammetry & Pixel-to-World Projection
+For every detected `track_id`, the system must extract the physical real-world location.
+* **EXIF Extraction:** Extract the following metadata from the drone images: `GPSLatitude`, `GPSLongitude`, `RelativeAltitude` (Quadcopter Height), `GimbalPitchDegree`, and `FocalLength`.
+* **Calculation:** 1. Calculate the Ground Sample Distance (GSD) using the drone's height and camera sensor specifications.
+    2. Ray-trace the center pixel of the anomaly's bounding box to the ground plane, adjusting for the gimbal angle and drone altitude.
+    3. Output an estimated Global GPS Coordinate (Latitude, Longitude) for the exact defect location.
+
+# STAGE 2: DIGITAL TWIN & LAYOUT MAPPING
+
+## 4. Layout Ingestion
+* The user will upload a general layout plan (e.g., CAD export, GeoJSON, or annotated PDF) containing the mapped polygons or center-points of every PV panel/string, along with their associated names/IDs (e.g., "Inverter 4, String 12, Panel 8").
+
+## 5. Spatial Matching
+* **Coordinate Transformation:** The system must align the calculated GPS coordinates of the tracked anomalies with the coordinate system of the uploaded layout plan.
+* **Nearest Neighbor / Point-in-Polygon:** Use spatial indexing (e.g., an R-tree or Shapely in Python) to snap the calculated anomaly coordinate to the nearest panel polygon on the layout plan.
+
+# OUTPUT SPECIFICATION
+The final output must be a structured JSON payload detailing the specific faulty panels, ready for maintenance dispatch.
+Format:
+[
+  {
+    "defect_id": "DEF-1042",
+    "class_name": "bypass_diode",
+    "confidence": 0.94,
+    "frames_tracked": 5,
+    "estimated_coordinates": {
+      "latitude": 37.7453,
+      "longitude": 12.5512,
+      "quadcopter_height_m": 25.4
+    },
+    "layout_mapping": {
+      "matched_panel_id": "INV-02_STR-14_PNL-09",
+      "distance_to_panel_center_m": 0.15
+    }
+  }
+]
+
+# EXECUTION COMMANDS
+1. Instantiate the vision model and tracker for Stage 1.
+2. Build the EXIF parsing and ray-tracing logic to convert pixel coordinates to GPS coordinates.
+3. Expose an endpoint for Stage 2 layout ingestion, deploying spatial matching logic to map defects to specific panel names.
+
+
+Update: The user will provide input frames using dynamic paths formatted as /data/Project_Name/Date/*.jpg. Ensure the FastAPI endpoint and tracking script are configured to recursively read all .jpg images from whatever dynamic directory path is passed to it, rather than relying on a hardcoded folder.
