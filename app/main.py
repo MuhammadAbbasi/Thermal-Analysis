@@ -18,6 +18,8 @@ from typing import Dict, List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import OUTPUTS_DIR
 from app.layout_mapper import LayoutStore
@@ -32,6 +34,8 @@ from app.tracker_pipeline import _find_images, run_pipeline
 
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
 app = FastAPI(
     title="AutoThermo",
     description="Automated PV panel anomaly detection, tracking, geolocation and layout mapping.",
@@ -44,6 +48,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 # In-memory state (cleared on restart)
 _scan_store: Dict[str, ScanResponse] = {}
@@ -73,9 +79,188 @@ def _apply_layout(defects: List[DefectRecord], store: LayoutStore) -> List[Defec
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/")
+def serve_ui():
+    return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "layout_loaded": _layout_store is not None and len(_layout_store.panels) > 0}
+
+
+@app.get("/scans")
+def list_scans():
+    """Return all scan IDs currently held in memory."""
+    return list(_scan_store.keys())
+
+
+# ── Plant layout endpoints ──────────────────────────────────────────────────
+
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
+@app.get("/plant/metadata")
+def plant_metadata():
+    path = os.path.join(_DATA_DIR, "plant_metadata.json")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Plant metadata not found. Run build_plant_layout.py first.")
+    return FileResponse(path, media_type="application/json")
+
+
+@app.get("/plant/geojson")
+def plant_geojson():
+    path = os.path.join(_DATA_DIR, "plant_layout.geojson")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Plant GeoJSON not found.")
+    return FileResponse(path, media_type="application/json")
+
+
+@app.get("/plant/panels")
+def plant_panels():
+    path = os.path.join(_DATA_DIR, "plant_panels.geojson")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Panel GeoJSON not found.")
+    return FileResponse(path, media_type="application/json")
+
+
+@app.get("/image")
+def serve_image(path: str, x1: float = 0, y1: float = 0,
+                x2: float = 0, y2: float = 0,
+                cls: str = "", conf: float = 0):
+    """
+    Serve a thermal JPG annotated with a defect bounding box.
+    path  — absolute or relative path to the JPG
+    x1,y1,x2,y2 — bbox in pixels (skip annotation if all zero)
+    cls   — class name for colour/label
+    conf  — confidence for label
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+
+    COLORS = {
+        "hotspot":      (239, 68,  68),
+        "bypass_diode": (249, 115, 22),
+        "hot_region":   (234, 179,  8),
+        "cold_region":  (59, 130, 246),
+    }
+
+    if not os.path.isabs(path):
+        path = os.path.join(_DATA_DIR, "..", path)
+    path = os.path.normpath(path)
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"Image not found: {path}")
+
+    img = Image.open(path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    has_bbox = not (x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0)
+    if has_bbox:
+        color = COLORS.get(cls, (148, 163, 184))
+        lw = max(2, int(img.width / 200))
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=lw)
+        label = f"{cls.replace('_', ' ')} {conf*100:.0f}%" if cls else ""
+        if label:
+            pad = 4
+            tw = len(label) * 7
+            th = 14
+            draw.rectangle([x1, y1 - th - pad*2, x1 + tw + pad*2, y1], fill=color)
+            try:
+                font = ImageFont.truetype("arial.ttf", 13)
+            except Exception:
+                font = ImageFont.load_default()
+            draw.text((x1 + pad, y1 - th - pad), label, fill="white", font=font)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=88)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/jpeg")
+
+
+@app.get("/footprints")
+def get_footprints(path: str):
+    """
+    Return a GeoJSON FeatureCollection of ground-projected image footprints.
+    Each feature is the quadrilateral on the ground that the camera captured,
+    computed by ray-tracing the 4 corner pixels using the image EXIF metadata.
+    """
+    from app.exif_parser import parse_frame
+    from app.geolocator import pixel_to_gps
+
+    try:
+        frames = _find_images(path)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    if not frames:
+        raise HTTPException(status_code=404, detail=f"No images found in: {path}")
+
+    features = []
+    for frame_path in frames:
+        try:
+            meta = parse_frame(frame_path)
+        except Exception:
+            continue
+
+        if not meta.valid_gps or meta.altitude_m <= 0:
+            continue
+
+        w, h = meta.image_w, meta.image_h
+        # Ray-trace the 4 image corners to GPS coordinates
+        corners = [
+            pixel_to_gps(0, 0, meta),
+            pixel_to_gps(w, 0, meta),
+            pixel_to_gps(w, h, meta),
+            pixel_to_gps(0, h, meta),
+        ]
+        # GeoJSON uses [lon, lat] order; close the ring
+        ring = [[lon, lat] for lat, lon in corners]
+        ring.append(ring[0])
+
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "filename":     os.path.basename(frame_path),
+                "altitude_m":   round(meta.altitude_m, 1),
+                "gimbal_pitch": round(meta.gimbal_pitch_deg, 1),
+                "flight_yaw":   round(meta.flight_yaw_deg, 1),
+                "latitude":     round(meta.latitude, 6),
+                "longitude":    round(meta.longitude, 6),
+            },
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+        })
+
+    return {"type": "FeatureCollection", "features": features, "total": len(features)}
+
+
+@app.get("/center")
+def get_center(path: str):
+    """Return the GPS centroid of images in a directory. Reads first 20 frames for speed."""
+    from app.exif_parser import parse_frame
+    try:
+        frames = _find_images(path)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if not frames:
+        raise HTTPException(status_code=404, detail=f"No images found in: {path}")
+
+    lats, lons = [], []
+    for fp in frames[:20]:
+        try:
+            meta = parse_frame(fp)
+            if meta.valid_gps:
+                lats.append(meta.latitude)
+                lons.append(meta.longitude)
+        except Exception:
+            continue
+    if not lats:
+        raise HTTPException(status_code=422, detail="No valid GPS found in sampled images.")
+    return {
+        "latitude":  round(sum(lats) / len(lats), 6),
+        "longitude": round(sum(lons) / len(lons), 6),
+        "samples":   len(lats),
+    }
 
 
 @app.post("/scan", response_model=ScanResponse)

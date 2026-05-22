@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoThermo — PV Thermal Inspection Dashboard</title>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117; --surface: #161b22; --surface2: #1e2433;
+      --border: #2a3045; --text: #e2e8f0; --dim: #8b95a9;
+      --accent: #6366f1; --ok: #22c55e; --warn: #eab308;
+      --danger: #ef4444; --orange: #f97316; --blue: #3b82f6;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    header { height: 50px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 18px; gap: 14px; flex-shrink: 0; z-index: 1000; }
+    .logo { font-weight: 700; font-size: 1.05rem; color: var(--accent); letter-spacing: -0.02em; }
+    .logo span { color: var(--text); }
+    .subtitle { font-size: 0.78rem; color: var(--dim); }
+    .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .status-pill { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; background: var(--surface2); border: 1px solid var(--border); font-size: 0.72rem; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+    .dot.online  { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+    .dot.offline { background: var(--danger); }
+
+    .body { display: flex; flex: 1; overflow: hidden; }
+
+    .sidebar { width: 310px; min-width: 310px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+    .sidebar-inner { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+    .sidebar-inner::-webkit-scrollbar { width: 3px; }
+    .sidebar-inner::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .card-hd { padding: 8px 13px; font-size: 0.67rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--dim); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 7px; }
+    .card-hd .badge { margin-left: auto; background: rgba(99,102,241,0.15); color: var(--accent); border-radius: 10px; padding: 1px 7px; font-size: 0.68rem; font-weight: 600; }
+    .card-bd { padding: 11px 13px; }
+
+    .dropzone { border: 2px dashed var(--border); border-radius: 6px; padding: 18px 12px; text-align: center; cursor: pointer; position: relative; transition: border-color .18s, background .18s; }
+    .dropzone:hover, .dropzone.over { border-color: var(--accent); background: rgba(99,102,241,.06); }
+    .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .dropzone .dz-icon { font-size: 1.4rem; }
+    .dropzone .dz-lbl { font-size: 0.78rem; color: var(--dim); margin-top: 4px; }
+    .dropzone .dz-hint { font-size: 0.68rem; color: #4b5a72; margin-top: 2px; }
+    .info-row { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--dim); padding: 3px 0; }
+
+    .fld { margin-bottom: 9px; }
+    .fld label { display: block; font-size: 0.7rem; color: var(--dim); font-weight: 500; margin-bottom: 3px; }
+    .fld input[type=text], .fld input[type=number] { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); padding: 6px 9px; font-size: 0.78rem; font-family: ui-monospace, monospace; }
+    .fld input:focus { outline: none; border-color: var(--accent); }
+    .range-row { display: flex; align-items: center; gap: 8px; }
+    .range-row input[type=range] { flex: 1; accent-color: var(--accent); cursor: pointer; }
+    .rval { font-size: 0.72rem; color: var(--dim); min-width: 30px; text-align: right; }
+
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 13px; border-radius: 6px; font-size: 0.8rem; font-weight: 500; cursor: pointer; border: none; font-family: inherit; transition: opacity .15s, background .15s; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; width: 100%; }
+    .btn-primary:not(:disabled):hover { background: #4f46e5; }
+    .btn-sm { padding: 4px 9px; font-size: 0.7rem; background: var(--surface); color: var(--dim); border: 1px solid var(--border); }
+    .btn-sm:hover { border-color: var(--accent); color: var(--text); }
+
+    .pbar { height: 2px; background: var(--border); border-radius: 1px; margin-top: 9px; overflow: hidden; display: none; }
+    .pbar.on { display: block; }
+    .pbar-fill { height: 100%; background: var(--accent); width: 40%; animation: slide 1.4s infinite; }
+    @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 9px 8px; text-align: center; }
+    .stat .val { font-size: 1.55rem; font-weight: 700; line-height: 1; }
+    .stat .lbl { font-size: 0.62rem; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-top: 3px; }
+    .cls-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; font-size: 0.76rem; }
+    .cls-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .cls-name { flex: 1; text-transform: capitalize; }
+    .cls-bar-out { width: 50px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .cls-bar-in  { height: 100%; border-radius: 2px; }
+    .cls-cnt { font-weight: 600; font-size: 0.82rem; min-width: 18px; text-align: right; }
+
+    .filter-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; font-size: 0.75rem; cursor: pointer; }
+    .filter-row input[type=checkbox] { accent-color: var(--accent); cursor: pointer; }
+    .chip { padding: 2px 8px; border-radius: 12px; font-size: 0.67rem; font-weight: 600; color: #fff; }
+    .filter-cnt { margin-left: auto; color: var(--dim); font-size: 0.7rem; }
+
+    .d-list { max-height: 260px; overflow-y: auto; }
+    .d-list::-webkit-scrollbar { width: 3px; }
+    .d-list::-webkit-scrollbar-thumb { background: var(--border); }
+    .d-item { display: flex; align-items: center; gap: 7px; padding: 7px 8px; border-radius: 5px; cursor: pointer; transition: background .12s; font-size: 0.72rem; }
+    .d-item:hover { background: var(--surface); }
+    .d-item.sel   { background: rgba(99,102,241,.18); }
+    .d-id  { font-family: ui-monospace,monospace; font-weight: 600; color: var(--dim); width: 54px; flex-shrink: 0; }
+    .d-cls { flex: 1; text-transform: capitalize; }
+    .d-cf  { color: var(--dim); width: 34px; text-align: right; }
+    .d-pan { font-size: 0.65rem; color: var(--accent); width: 70px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .empty { text-align: center; padding: 18px; color: var(--dim); font-size: 0.76rem; }
+    .empty .ei { font-size: 1.4rem; margin-bottom: 5px; }
+
+    .map-wrap { flex: 1; position: relative; }
+    #map { width: 100%; height: 100%; }
+
+    .overlay { position: absolute; inset: 0; background: rgba(13,17,23,.78); z-index: 800; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 12px; backdrop-filter: blur(5px); }
+    .overlay.on { display: flex; }
+    .spinner { width: 38px; height: 38px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .75s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .ov-title { font-size: 0.88rem; font-weight: 500; }
+    .ov-sub   { font-size: 0.72rem; color: var(--dim); }
+
+    .img-modal { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; backdrop-filter: blur(6px); }
+    .img-modal.on { display: flex; }
+    .img-modal-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.7); }
+    .img-modal-hd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 0.82rem; font-weight: 600; flex-shrink: 0; }
+    .img-close { margin-left:auto; cursor:pointer; background:none; border:none; color:var(--dim); font-size:1.2rem; padding:2px 6px; }
+    .img-close:hover { color: var(--text); }
+    .img-modal-body { overflow: auto; display: flex; }
+    .img-modal-img  { max-width: 72vw; max-height: 82vh; object-fit: contain; display: block; }
+    .img-modal-meta { width: 210px; min-width: 210px; padding: 12px; border-left: 1px solid var(--border); font-size: 0.73rem; overflow-y: auto; }
+    .mm-key { color:var(--dim); font-size:.65rem; text-transform:uppercase; letter-spacing:.04em; }
+    .mm-val { margin: 2px 0 8px; font-family:ui-monospace,monospace; font-size:.72rem; word-break:break-all; }
+    .mm-badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:.68rem; font-weight:600; color:#fff; margin-bottom:10px; }
+    .img-nav { display:flex; gap:5px; margin-top:8px; }
+    .img-nav .btn { flex:1; font-size:.72rem; padding:5px; }
+
+    .toast { position: fixed; top: 58px; right: 14px; z-index: 9000; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 15px; font-size: 0.78rem; max-width: 300px; box-shadow: 0 6px 24px rgba(0,0,0,.4); display: none; line-height: 1.4; }
+    .toast.ok   { border-left: 3px solid var(--ok); }
+    .toast.err  { border-left: 3px solid var(--danger); }
+    .toast.info { border-left: 3px solid var(--accent); }
+
+    .scan-id { margin-top: 7px; display: none; font-size: 0.7rem; color: var(--dim); }
+    .scan-id code { background: rgba(99,102,241,.12); color: var(--accent); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, monospace; }
+
+    /* Popup content (shared between MapLibre popups) */
+    .pu-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 7px; }
+    .pu-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.68rem; font-weight: 600; color: #fff; margin-bottom: 9px; }
+    .pu-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.75rem; margin-bottom: 4px; }
+    .pu-key { color: var(--dim); }
+    .pu-val { font-family: ui-monospace, monospace; font-size: 0.72rem; font-weight: 500; }
+
+    /* Legend (HTML overlay, bottom-right of map) */
+    .legend-wrap { position: absolute; bottom: 28px; right: 10px; z-index: 100; pointer-events: none; }
+    .legend-box { background: rgba(22,27,34,.92); border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; font-size: 0.68rem; backdrop-filter: blur(8px); }
+    .lg-title { font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
+    .lg-row   { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+    .lg-dot   { width: 9px; height: 9px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25); flex-shrink: 0; }
+    .lg-sq    { width: 13px; height: 7px; border-radius: 2px; opacity: .75; flex-shrink: 0; }
+    .lg-sep   { height: 1px; background: var(--border); margin: 6px 0; }
+
+    /* Collapsible cards */
+    .card-hd.toggleable { cursor: pointer; user-select: none; }
+    .card-hd.toggleable .t-arr { margin-left: auto; font-size: 0.72rem; color: var(--dim); transition: transform .18s; display: inline-block; }
+    .card.collapsed .card-hd.toggleable .t-arr { transform: rotate(-90deg); }
+    .card.collapsed .card-bd { display: none; }
+
+    /* Locate button overlay */
+    .locate-btn { position: absolute; left: 10px; top: 58px; z-index: 100; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; width: 34px; height: 34px; font-size: 0.95rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s, border-color .15s; }
+    .locate-btn:hover { background: var(--surface); border-color: var(--accent); }
+
+    /* MapLibre overrides */
+    .maplibregl-popup-content {
+      background: var(--surface2) !important;
+      color: var(--text) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 8px !important;
+      padding: 13px 15px !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,.5) !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+      font-size: 0.78rem !important;
+    }
+    .maplibregl-popup-tip { display: none !important; }
+    .maplibregl-popup-close-button { color: var(--dim) !important; font-size: 18px !important; right: 6px !important; top: 4px !important; background: none !important; border: none !important; padding: 0 !important; }
+    .maplibregl-popup-close-button:hover { color: var(--text) !important; background: none !important; }
+    /* tooltip popups: no padding/close */
+    .tip-popup .maplibregl-popup-content { padding: 5px 9px !important; font-size: 0.7rem !important; pointer-events: none; }
+    .tip-popup .maplibregl-popup-close-button { display: none !important; }
+    /* Nav controls */
+    .maplibregl-ctrl-group { background: var(--surface2) !important; border: 1px solid var(--border) !important; border-radius: 6px !important; overflow: hidden; }
+    .maplibregl-ctrl-group button { background: var(--surface2) !important; border-bottom: 1px solid var(--border) !important; }
+    .maplibregl-ctrl-group button:last-child { border-bottom: none !important; }
+    .maplibregl-ctrl-icon { filter: invert(0.85) !important; }
+    .maplibregl-ctrl-attrib { background: rgba(13,17,23,.7) !important; color: var(--dim) !important; font-size: 10px !important; }
+    .maplibregl-ctrl-attrib a { color: var(--dim) !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⚡ Auto<span>Thermo</span></div>
+  <div class="subtitle">PV Thermal Inspection Dashboard</div>
+  <div class="hdr-right">
+    <div class="status-pill">
+      <div class="dot" id="sdot"></div>
+      <span id="slabel">Connecting…</span>
+    </div>
+  </div>
+</header>
+
+<div class="body">
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <!-- Layers -->
+      <div class="card">
+        <div class="card-hd">🗂 Layers</div>
+        <div class="card-bd" style="display:flex;flex-direction:column;gap:5px;">
+          <div class="filter-row">
+            <input type="checkbox" id="lyr-footprints" onchange="toggleFootprints(this.checked)">
+            <span style="font-size:0.78rem;">🖼 Image Footprints</span>
+            <span class="filter-cnt" id="fp-count" style="display:none"></span>
+          </div>
+          <div id="fp-loading" style="display:none;font-size:0.7rem;color:var(--dim);padding-left:22px;">Loading footprints…</div>
+          <div class="filter-row">
+            <input type="checkbox" id="lyr-plant" checked
+              onchange="toggleLayer(['plant-zone-fill','plant-zone-line','plant-zone-label','plant-dc'], this.checked)">
+            <span style="font-size:0.78rem;">⚡ ITS Zones (DWF)</span>
+          </div>
+          <div class="filter-row">
+            <input type="checkbox" id="lyr-panels" checked
+              onchange="toggleLayer(['panels-fill','panels-line','panels-circle'], this.checked)">
+            <span style="font-size:0.78rem;">📐 Panel Layout</span>
+          </div>
+          <div class="filter-row">
+            <input type="checkbox" id="lyr-defects" checked
+              onchange="toggleLayer(['defects-circle'], this.checked)">
+            <span style="font-size:0.78rem;">⚠ Defect Markers</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Plant layout upload -->
+      <div class="card">
+        <div class="card-hd">
+          🗺 Plant Layout
+          <span class="badge" id="panel-badge" style="display:none">0 panels</span>
+        </div>
+        <div class="card-bd">
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="layout-file" accept=".geojson,.json,.csv">
+            <div class="dz-icon">📂</div>
+            <div class="dz-lbl">Drop GeoJSON or CSV file</div>
+            <div class="dz-hint">panel_id · geometry or lat/lon columns</div>
+          </div>
+          <div id="layout-info" style="margin-top:8px;display:none">
+            <div class="info-row">✅ <span id="lfile">—</span></div>
+            <div class="info-row">📐 <span id="lpanels">—</span> panels loaded</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scan controls -->
+      <div class="card">
+        <div class="card-hd toggleable" onclick="toggleCard(this)">🔍 Run Scan<span class="t-arr">▾</span></div>
+        <div class="card-bd">
+          <div class="fld">
+            <label>Image Directory Path</label>
+            <input type="text" id="scan-path" value="data/SP3/2026_05_13" placeholder="data/SP3/YYYY_MM_DD">
+          </div>
+          <div class="fld">
+            <label>Confidence Threshold</label>
+            <div class="range-row">
+              <input type="range" id="rconf" min="0.05" max="0.95" step="0.05" value="0.25"
+                     oninput="document.getElementById('vconf').textContent=parseFloat(this.value).toFixed(2)">
+              <span class="rval" id="vconf">0.25</span>
+            </div>
+          </div>
+          <div class="fld">
+            <label>IoU Threshold</label>
+            <div class="range-row">
+              <input type="range" id="riou" min="0.05" max="0.95" step="0.05" value="0.45"
+                     oninput="document.getElementById('viou').textContent=parseFloat(this.value).toFixed(2)">
+              <span class="rval" id="viou">0.45</span>
+            </div>
+          </div>
+          <div class="fld">
+            <label>Min Frames Tracked</label>
+            <div class="range-row">
+              <input type="range" id="rmf" min="1" max="10" step="1" value="2"
+                     oninput="document.getElementById('vmf').textContent=this.value">
+              <span class="rval" id="vmf">2</span>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="scan-btn" onclick="runScan()">▶ Run Scan</button>
+          <div class="pbar" id="pbar"><div class="pbar-fill"></div></div>
+          <div class="scan-id" id="scan-id-row">Scan ID: <code id="scan-id-val"></code></div>
+        </div>
+      </div>
+
+      <!-- Summary (hidden until scan) -->
+      <div class="card" id="stats-card" style="display:none">
+        <div class="card-hd toggleable" onclick="toggleCard(this)">📊 Summary<span class="t-arr">▾</span></div>
+        <div class="card-bd">
+          <div class="stats-grid">
+            <div class="stat"><div class="val" id="st-total">0</div><div class="lbl">Defects</div></div>
+            <div class="stat"><div class="val" id="st-frames">0</div><div class="lbl">Frames</div></div>
+            <div class="stat"><div class="val" id="st-panels">—</div><div class="lbl">Panels hit</div></div>
+            <div class="stat"><div class="val" id="st-hs" style="color:var(--danger)">0</div><div class="lbl">Hotspots</div></div>
+          </div>
+          <div id="cls-breakdown" style="margin-top:11px;"></div>
+        </div>
+      </div>
+
+      <!-- Filters (hidden until scan) -->
+      <div class="card collapsed" id="filters-card" style="display:none">
+        <div class="card-hd toggleable" onclick="toggleCard(this)">🎛 Filters<span class="t-arr">▾</span></div>
+        <div class="card-bd" id="filters-body"></div>
+      </div>
+
+      <!-- Defect list (hidden until scan) -->
+      <div class="card" id="list-card" style="display:none">
+        <div class="card-hd">
+          📋 Defects
+          <span style="margin-left:auto;display:flex;gap:5px;">
+            <button class="btn btn-sm" onclick="exportCSV()">↓ CSV</button>
+            <button class="btn btn-sm" onclick="exportJSON()">↓ JSON</button>
+          </span>
+        </div>
+        <div class="card-bd" style="padding:4px 6px;">
+          <div class="d-list" id="d-list"></div>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+    <button class="locate-btn" onclick="autoCenter()" title="Fly to plant location">📍</button>
+
+    <div class="overlay" id="overlay">
+      <div class="spinner"></div>
+      <div class="ov-title">Running thermal scan…</div>
+      <div class="ov-sub" id="ov-sub">This may take several minutes for large datasets</div>
+    </div>
+
+    <!-- Legend (HTML overlay) -->
+    <div class="legend-wrap">
+      <div class="legend-box">
+        <div class="lg-title">Defect Type</div>
+        <div class="lg-row"><div class="lg-dot" style="background:#ef4444"></div><span>Hotspot</span></div>
+        <div class="lg-row"><div class="lg-dot" style="background:#f97316"></div><span>Bypass diode</span></div>
+        <div class="lg-row"><div class="lg-dot" style="background:#eab308"></div><span>Hot region</span></div>
+        <div class="lg-row"><div class="lg-dot" style="background:#3b82f6"></div><span>Cold region</span></div>
+        <div class="lg-sep"></div>
+        <div class="lg-title">Plant</div>
+        <div class="lg-row"><div class="lg-sq" style="background:#6366f1;border:1px dashed #6366f1"></div><span>ITS zone (Voronoi)</span></div>
+        <div class="lg-row"><div class="lg-dot" style="background:#facc15"></div><span>DC combiner</span></div>
+        <div class="lg-sep"></div>
+        <div class="lg-title">Image Footprint</div>
+        <div class="lg-row"><div class="lg-sq" style="background:#67e8f9;border:1px dashed #67e8f9"></div><span>Camera coverage</span></div>
+        <div class="lg-sep"></div>
+        <div class="lg-title">Panel Status</div>
+        <div class="lg-row"><div class="lg-sq" style="background:#22c55e"></div><span>No defect</span></div>
+        <div class="lg-row"><div class="lg-sq" style="background:#eab308"></div><span>Low severity</span></div>
+        <div class="lg-row"><div class="lg-sq" style="background:#f97316"></div><span>Medium</span></div>
+        <div class="lg-row"><div class="lg-sq" style="background:#ef4444"></div><span>Hotspot</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="img-modal" id="img-modal" onclick="if(event.target===this)closeImgModal()">
+  <div class="img-modal-box">
+    <div class="img-modal-hd">
+      <span id="img-modal-title">Thermal Image</span>
+      <button class="img-close" onclick="closeImgModal()">✕</button>
+    </div>
+    <div class="img-modal-body">
+      <img class="img-modal-img" id="img-modal-img" src="" alt="Thermal image">
+      <div class="img-modal-meta" id="img-modal-meta"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+'use strict';
+
+const API = '';
+
+const CLS_COLOR = {
+  hotspot:      '#ef4444',
+  bypass_diode: '#f97316',
+  hot_region:   '#eab308',
+  cold_region:  '#3b82f6',
+};
+const CLS_SEV = { hotspot: 3, bypass_diode: 2, hot_region: 1, cold_region: 0 };
+
+const ITS_COLORS = [
+  '#6366f1','#8b5cf6','#ec4899','#f43f5e','#f97316',
+  '#eab308','#22c55e','#10b981','#14b8a6','#06b6d4',
+  '#3b82f6','#a855f7','#d946ef','#fb7185','#fb923c',
+  '#facc15','#4ade80','#34d399','#2dd4bf','#38bdf8',
+];
+
+const SEV_COLORS    = ['#22c55e', '#eab308', '#f97316', '#ef4444'];
+const SEV_OPACITIES = [0.12, 0.25, 0.32, 0.42];
+
+const EMPTY_GJ = { type: 'FeatureCollection', features: [] };
+
+let defects       = [];
+let panelFeatures = [];
+let activeFilters = new Set(Object.keys(CLS_COLOR));
+let scanId        = null;
+let selDefectId   = null;
+let _mapReady     = false;
+
+/* ── Map ────────────────────────────────────────────────────────────────────── */
+const map = new maplibregl.Map({
+  container: 'map',
+  style: {
+    version: 8,
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    sources: {
+      'esri-sat': {
+        type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: '© Esri World Imagery',
+      },
+      'carto-labels': {
+        type: 'raster',
+        tiles: ['https://a.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: '© CartoDB',
+      },
+    },
+    layers: [
+      { id: 'esri-sat',     type: 'raster', source: 'esri-sat' },
+      { id: 'carto-labels', type: 'raster', source: 'carto-labels', paint: { 'raster-opacity': 0.55 } },
+    ],
+  },
+  center: [13.000387, 37.834954],
+  zoom: 14,
+  maxZoom: 22,
+  attributionControl: false,
+});
+
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
+
+/* Shared hover tooltip (no close button, follows cursor) */
+const hoverTip = new maplibregl.Popup({
+  closeButton: false,
+  closeOnClick: false,
+  className: 'tip-popup',
+  offset: 12,
+});
+
+map.on('load', () => {
+  _mapReady = true;
+
+  /* Add all GeoJSON sources (empty at first) */
+  ['plant', 'panels', 'defects', 'footprints'].forEach(id =>
+    map.addSource(id, { type: 'geojson', data: EMPTY_GJ })
+  );
+
+  /* ── Footprint layers (off by default) ── */
+  map.addLayer({ id: 'footprints-fill', type: 'fill', source: 'footprints',
+    layout: { visibility: 'none' },
+    paint: { 'fill-color': '#a5f3fc', 'fill-opacity': 0.06 } });
+  map.addLayer({ id: 'footprints-line', type: 'line', source: 'footprints',
+    layout: { visibility: 'none' },
+    paint: { 'line-color': '#67e8f9', 'line-width': 0.8, 'line-opacity': 0.55, 'line-dasharray': [3, 3] } });
+
+  /* ── Plant zone layers ── */
+  map.addLayer({ id: 'plant-zone-fill', type: 'fill', source: 'plant',
+    filter: ['==', ['get', 'feature_type'], 'zone'],
+    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.1 } });
+  map.addLayer({ id: 'plant-zone-line', type: 'line', source: 'plant',
+    filter: ['==', ['get', 'feature_type'], 'zone'],
+    paint: { 'line-color': ['get', 'color'], 'line-width': 1.8, 'line-dasharray': [5, 4], 'line-opacity': 0.75 } });
+  map.addLayer({ id: 'plant-zone-label', type: 'symbol', source: 'plant',
+    filter: ['==', ['get', 'feature_type'], 'label'],
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-size': 12,
+      'text-font': ['Open Sans Bold', 'Arial Unicode MS Regular'],
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': ['get', 'color'],
+      'text-halo-color': 'rgba(0,0,0,0.92)',
+      'text-halo-width': 1.5,
+    } });
+  map.addLayer({ id: 'plant-dc', type: 'circle', source: 'plant',
+    filter: ['==', ['get', 'feature_type'], 'dc_combiner'],
+    paint: { 'circle-radius': 5, 'circle-color': '#facc15', 'circle-opacity': 0.9, 'circle-stroke-color': '#78350f', 'circle-stroke-width': 1.5 } });
+
+  /* ── Panel layers ── */
+  map.addLayer({ id: 'panels-fill', type: 'fill', source: 'panels',
+    filter: ['==', '$type', 'Polygon'],
+    paint: { 'fill-color': ['get', 'fill_color'], 'fill-opacity': ['get', 'fill_opacity'] } });
+  map.addLayer({ id: 'panels-line', type: 'line', source: 'panels',
+    filter: ['==', '$type', 'Polygon'],
+    paint: { 'line-color': ['get', 'fill_color'], 'line-width': 1.5, 'line-opacity': 0.7 } });
+  map.addLayer({ id: 'panels-circle', type: 'circle', source: 'panels',
+    filter: ['==', '$type', 'Point'],
+    paint: { 'circle-radius': 5, 'circle-color': ['get', 'fill_color'], 'circle-opacity': 0.45, 'circle-stroke-color': ['get', 'fill_color'], 'circle-stroke-width': 1.5 } });
+
+  /* ── Defect layer ── */
+  map.addLayer({
+    id: 'defects-circle',
+    type: 'circle',
+    source: 'defects',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['get', 'confidence'], 0, 5, 1, 12],
+      'circle-color': ['match', ['get', 'class_name'],
+        'hotspot',      '#ef4444',
+        'bypass_diode', '#f97316',
+        'hot_region',   '#eab308',
+        'cold_region',  '#3b82f6',
+        '#94a3b8'],
+      'circle-opacity': 0.88,
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 1.5,
+    },
+  });
+
+  /* ── Interactions ── */
+
+  /* Defects */
+  map.on('click', 'defects-circle', e => {
+    const d = defects.find(x => x.defect_id === e.features[0].properties.defect_id);
+    if (!d) return;
+    new maplibregl.Popup({ maxWidth: '280px', offset: 10 })
+      .setLngLat(e.lngLat).setHTML(buildDefectPopup(d)).addTo(map);
+    selectDefect(d.defect_id);
+  });
+  map.on('mouseenter', 'defects-circle', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'defects-circle', () => { map.getCanvas().style.cursor = ''; });
+
+  /* Plant zones */
+  map.on('click', 'plant-zone-fill', e => {
+    new maplibregl.Popup({ maxWidth: '240px', offset: 10 })
+      .setLngLat(e.lngLat).setHTML(buildZonePopup(e.features[0].properties)).addTo(map);
+  });
+  map.on('mouseenter', 'plant-zone-fill', e => {
+    map.getCanvas().style.cursor = 'pointer';
+    hoverTip.setLngLat(e.lngLat).setHTML(e.features[0].properties.name || '').addTo(map);
+  });
+  map.on('mousemove', 'plant-zone-fill', e => hoverTip.setLngLat(e.lngLat));
+  map.on('mouseleave', 'plant-zone-fill', () => { map.getCanvas().style.cursor = ''; hoverTip.remove(); });
+
+  /* DC combiners */
+  map.on('click', 'plant-dc', e => {
+    const p = e.features[0].properties;
+    new maplibregl.Popup({ maxWidth: '200px', offset: 10 })
+      .setLngLat(e.lngLat)
+      .setHTML(`<div class="pu-title">⚡ ${p.dc_id}</div><div style="font-size:.75rem;color:var(--dim)">DC Combiner Box</div><div style="font-size:.75rem;margin-top:4px">${p.its}</div>`)
+      .addTo(map);
+  });
+  map.on('mouseenter', 'plant-dc', e => {
+    map.getCanvas().style.cursor = 'pointer';
+    const p = e.features[0].properties;
+    hoverTip.setLngLat(e.lngLat).setHTML(`${p.dc_id} · DC Combiner (${p.its})`).addTo(map);
+  });
+  map.on('mousemove', 'plant-dc', e => hoverTip.setLngLat(e.lngLat));
+  map.on('mouseleave', 'plant-dc', () => { map.getCanvas().style.cursor = ''; hoverTip.remove(); });
+
+  /* Footprint hover tooltip */
+  map.on('mouseenter', 'footprints-fill', e => {
+    map.getCanvas().style.cursor = 'crosshair';
+    const p = e.features[0].properties;
+    hoverTip.setLngLat(e.lngLat)
+      .setHTML(`<b>${p.filename}</b><br>Alt: ${p.altitude_m} m &nbsp;|&nbsp; Pitch: ${p.gimbal_pitch}°<br>Yaw: ${p.flight_yaw}° &nbsp;|&nbsp; GPS: ${p.latitude}, ${p.longitude}`)
+      .addTo(map);
+  });
+  map.on('mousemove', 'footprints-fill', e => hoverTip.setLngLat(e.lngLat));
+  map.on('mouseleave', 'footprints-fill', () => { map.getCanvas().style.cursor = ''; hoverTip.remove(); });
+
+  loadPlantLayout();
+  autoCenter();
+});
+
+/* ── Utilities ──────────────────────────────────────────────────────────────── */
+
+function toggleLayer(ids, visible) {
+  for (const id of ids) {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
+  }
+}
+
+function gjBounds(features) {
+  const coords = features.flatMap(f => {
+    const g = f.geometry;
+    if (!g) return [];
+    if (g.type === 'Point') return [g.coordinates];
+    if (g.type === 'Polygon') return g.coordinates[0];
+    if (g.type === 'MultiPolygon') return g.coordinates.flat(2);
+    return [];
+  }).filter(c => isFinite(c[0]) && isFinite(c[1]));
+  if (!coords.length) return null;
+  const lons = coords.map(c => c[0]);
+  const lats = coords.map(c => c[1]);
+  return [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
+}
+
+/* ── Health check ───────────────────────────────────────────────────────────── */
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/health`);
+    if (!r.ok) throw new Error();
+    document.getElementById('sdot').className = 'dot online';
+    document.getElementById('slabel').textContent = 'Server online';
+  } catch {
+    document.getElementById('sdot').className = 'dot offline';
+    document.getElementById('slabel').textContent = 'Server offline';
+  }
+}
+checkHealth();
+setInterval(checkHealth, 15000);
+
+/* ── Toast ──────────────────────────────────────────────────────────────────── */
+let _toastTimer;
+function toast(msg, type = 'info', ms = 4500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = `toast ${type}`;
+  el.style.display = 'block';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.style.display = 'none'; }, ms);
+}
+
+/* ── Layout upload ──────────────────────────────────────────────────────────── */
+const dz   = document.getElementById('dropzone');
+const finp = document.getElementById('layout-file');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('over');
+  const f = e.dataTransfer.files[0]; if (f) uploadLayout(f);
+});
+finp.addEventListener('change', e => { if (e.target.files[0]) uploadLayout(e.target.files[0]); });
+
+async function uploadLayout(file) {
+  toast('Uploading layout…', 'info');
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const r = await fetch(`${API}/upload-layout`, { method: 'POST', body: form });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const data = await r.json();
+
+    const txt = await file.text();
+    const gj = file.name.toLowerCase().endsWith('.csv') ? csvToGeoJSON(txt) : JSON.parse(txt);
+    renderPanels(gj);
+
+    document.getElementById('panel-badge').textContent = `${data.panels_loaded} panels`;
+    document.getElementById('panel-badge').style.display = '';
+    document.getElementById('layout-info').style.display = '';
+    document.getElementById('lfile').textContent   = file.name;
+    document.getElementById('lpanels').textContent = data.panels_loaded;
+
+    if (defects.length) colorPanels();
+    toast(`Layout loaded — ${data.panels_loaded} panels`, 'ok');
+  } catch (e) {
+    toast('Layout failed: ' + e.message, 'err', 7000);
+  }
+}
+
+function csvToGeoJSON(txt) {
+  const rows = txt.trim().split('\n');
+  const hdrs = rows[0].split(',').map(h => h.trim().toLowerCase());
+  const latI = hdrs.findIndex(h => ['latitude','lat','y'].includes(h));
+  const lonI = hdrs.findIndex(h => ['longitude','lon','lng','x'].includes(h));
+  const idI  = hdrs.findIndex(h => ['panel_id','panelid','id','name','label','fid'].includes(h));
+  const features = [];
+  for (let i = 1; i < rows.length; i++) {
+    const c = rows[i].split(',').map(v => v.trim());
+    const lat = parseFloat(c[latI]), lon = parseFloat(c[lonI]);
+    if (isNaN(lat) || isNaN(lon)) continue;
+    features.push({ type: 'Feature', properties: { panel_id: idI >= 0 ? c[idI] : `PANEL-${i}` }, geometry: { type: 'Point', coordinates: [lon, lat] } });
+  }
+  return { type: 'FeatureCollection', features };
+}
+
+function renderPanels(gj) {
+  panelFeatures = gj.features.map(f => ({
+    ...f,
+    properties: { ...f.properties, fill_color: '#22c55e', fill_opacity: f.geometry.type === 'Point' ? 0.45 : 0.12 }
+  }));
+  if (_mapReady) {
+    map.getSource('panels').setData({ type: 'FeatureCollection', features: panelFeatures });
+    const b = gjBounds(panelFeatures);
+    if (b) map.fitBounds(b, { padding: 40 });
+  }
+}
+
+function colorPanels() {
+  const sevMap = {};
+  for (const d of defects) {
+    const pid = d.layout_mapping?.matched_panel_id;
+    if (!pid || pid === 'UNMATCHED') continue;
+    const s = CLS_SEV[d.class_name] ?? 0;
+    if (!(pid in sevMap) || s > sevMap[pid]) sevMap[pid] = s;
+  }
+  panelFeatures = panelFeatures.map(f => {
+    const pid = f.properties.panel_id || f.properties.PanelID || f.properties.id || '?';
+    const sev = sevMap[pid] ?? 0;
+    return { ...f, properties: { ...f.properties, fill_color: SEV_COLORS[sev] || '#22c55e', fill_opacity: SEV_OPACITIES[sev] || 0.12 } };
+  });
+  if (_mapReady) map.getSource('panels').setData({ type: 'FeatureCollection', features: panelFeatures });
+}
+
+/* ── Run scan ───────────────────────────────────────────────────────────────── */
+async function runScan() {
+  const path = document.getElementById('scan-path').value.trim();
+  const conf = parseFloat(document.getElementById('rconf').value);
+  const iou  = parseFloat(document.getElementById('riou').value);
+  const mf   = parseInt(document.getElementById('rmf').value);
+  if (!path) { toast('Enter an image directory path', 'err'); return; }
+  setScanning(true);
+  try {
+    const r = await fetch(`${API}/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, conf, iou, min_frames: mf }),
+    });
+    if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.detail || r.statusText); }
+    const data = await r.json();
+    scanId = data.scan_id;
+    renderResults(data);
+    toast(`Scan complete — ${data.defects_found} defect(s) found`, 'ok', 6000);
+    document.getElementById('scan-id-val').textContent = data.scan_id;
+    document.getElementById('scan-id-row').style.display = '';
+  } catch (e) {
+    toast('Scan failed: ' + e.message, 'err', 8000);
+  } finally {
+    setScanning(false);
+  }
+}
+
+function setScanning(on) {
+  document.getElementById('scan-btn').disabled = on;
+  document.getElementById('pbar').classList.toggle('on', on);
+  document.getElementById('overlay').classList.toggle('on', on);
+  document.getElementById('ov-sub').textContent = `Processing ${document.getElementById('scan-path').value} — this may take several minutes…`;
+}
+
+/* ── Render defects ─────────────────────────────────────────────────────────── */
+function renderResults(data) {
+  defects = data.defects || [];
+
+  const features = defects
+    .filter(d => d.estimated_coordinates?.latitude && d.estimated_coordinates?.longitude)
+    .map(d => ({
+      type: 'Feature',
+      properties: {
+        defect_id:      d.defect_id,
+        class_name:     d.class_name,
+        confidence:     d.confidence,
+        frames_tracked: d.frames_tracked,
+      },
+      geometry: { type: 'Point', coordinates: [d.estimated_coordinates.longitude, d.estimated_coordinates.latitude] },
+    }));
+
+  if (_mapReady) {
+    map.getSource('defects').setData({ type: 'FeatureCollection', features });
+    const b = gjBounds(features);
+    if (b) map.fitBounds(b, { padding: 60 });
+  }
+
+  colorPanels();
+  updateStats(data);
+  buildFilters();
+  renderList();
+  document.getElementById('stats-card').style.display   = '';
+  document.getElementById('filters-card').style.display = '';
+  document.getElementById('list-card').style.display    = '';
+}
+
+function buildDefectPopup(d) {
+  const color = CLS_COLOR[d.class_name] || '#94a3b8';
+  const panel = d.layout_mapping?.matched_panel_id || '—';
+  const dist  = d.layout_mapping?.distance_to_panel_center_m != null
+    ? d.layout_mapping.distance_to_panel_center_m.toFixed(2) + ' m' : '—';
+  return `
+    <div class="pu-title">${d.defect_id}</div>
+    <span class="pu-badge" style="background:${color}">${d.class_name.replace(/_/g,' ')}</span>
+    <div class="pu-row"><span class="pu-key">Confidence</span>    <span class="pu-val">${(d.confidence*100).toFixed(1)}%</span></div>
+    <div class="pu-row"><span class="pu-key">Frames tracked</span><span class="pu-val">${d.frames_tracked}</span></div>
+    <div class="pu-row"><span class="pu-key">Panel ID</span>       <span class="pu-val">${panel}</span></div>
+    <div class="pu-row"><span class="pu-key">Dist. to panel</span><span class="pu-val">${dist}</span></div>
+    <div class="pu-row"><span class="pu-key">Altitude</span>       <span class="pu-val">${d.estimated_coordinates?.quadcopter_height_m?.toFixed(1)} m</span></div>
+    <div class="pu-row"><span class="pu-key">GPS</span>            <span class="pu-val">${d.estimated_coordinates?.latitude?.toFixed(6)}, ${d.estimated_coordinates?.longitude?.toFixed(6)}</span></div>
+    ${d.source_images?.length ? `<button class="btn btn-primary" style="margin-top:9px;font-size:.72rem;padding:5px 0;" onclick="openImgModal('${d.defect_id}',0)">🖼 View Thermal Image</button>` : ''}`;
+}
+
+function buildZonePopup(p) {
+  return `
+    <div class="pu-title">${p.name || 'ITS Zone'}</div>
+    <div class="pu-row"><span class="pu-key">Modules</span>       <span class="pu-val">${(p.total_modules||0).toLocaleString()}</span></div>
+    <div class="pu-row"><span class="pu-key">Strings (~)</span>   <span class="pu-val">${p.est_strings||'—'}</span></div>
+    <div class="pu-row"><span class="pu-key">DC Combiners</span>  <span class="pu-val">${p.dc_combiners||'—'}</span></div>
+    <div class="pu-row"><span class="pu-key">Table config</span>  <span class="pu-val" style="font-size:.65rem">${p.table_config||'—'}</span></div>`;
+}
+
+/* ── Stats ──────────────────────────────────────────────────────────────────── */
+function updateStats(data) {
+  document.getElementById('st-total').textContent  = data.defects_found;
+  document.getElementById('st-frames').textContent = data.total_frames;
+  document.getElementById('st-hs').textContent     = defects.filter(d => d.class_name === 'hotspot').length;
+  const panelsHit = new Set(
+    defects.map(d => d.layout_mapping?.matched_panel_id).filter(p => p && p !== 'UNMATCHED')
+  ).size;
+  document.getElementById('st-panels').textContent = panelsHit || '—';
+
+  const counts = {};
+  for (const d of defects) counts[d.class_name] = (counts[d.class_name] || 0) + 1;
+  const max = Math.max(...Object.values(counts), 1);
+  document.getElementById('cls-breakdown').innerHTML = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cls, cnt]) => `
+      <div class="cls-row">
+        <div class="cls-dot" style="background:${CLS_COLOR[cls]||'#94a3b8'}"></div>
+        <span class="cls-name">${cls.replace(/_/g,' ')}</span>
+        <div class="cls-bar-out"><div class="cls-bar-in" style="width:${cnt/max*100}%;background:${CLS_COLOR[cls]||'#94a3b8'}"></div></div>
+        <span class="cls-cnt">${cnt}</span>
+      </div>`).join('');
+}
+
+/* ── Filters ────────────────────────────────────────────────────────────────── */
+function buildFilters() {
+  const classes = [...new Set(defects.map(d => d.class_name))];
+  activeFilters = new Set(classes);
+  document.getElementById('filters-body').innerHTML = classes.map(cls => `
+    <div class="filter-row" onclick="toggleFilter('${cls}')">
+      <input type="checkbox" id="fcb-${cls}" checked>
+      <span class="chip" style="background:${CLS_COLOR[cls]||'#94a3b8'}">${cls.replace(/_/g,' ')}</span>
+      <span class="filter-cnt">${defects.filter(d => d.class_name===cls).length}</span>
+    </div>`).join('');
+}
+
+function toggleFilter(cls) {
+  const cb = document.getElementById(`fcb-${cls}`);
+  if (!cb) return;
+  if (activeFilters.has(cls)) { activeFilters.delete(cls); cb.checked = false; }
+  else                        { activeFilters.add(cls);    cb.checked = true; }
+  applyFilters();
+}
+
+function applyFilters() {
+  if (_mapReady && map.getLayer('defects-circle')) {
+    const active = [...activeFilters];
+    if (active.length === 0) {
+      map.setFilter('defects-circle', ['==', ['get', 'class_name'], '__NONE__']);
+    } else if (active.length >= Object.keys(CLS_COLOR).length) {
+      map.setFilter('defects-circle', null);
+    } else {
+      map.setFilter('defects-circle', ['in', ['get', 'class_name'], ['literal', active]]);
+    }
+  }
+  renderList();
+}
+
+/* ── Defect list ────────────────────────────────────────────────────────────── */
+function renderList() {
+  const el      = document.getElementById('d-list');
+  const visible = defects.filter(d => activeFilters.has(d.class_name));
+  if (!visible.length) {
+    el.innerHTML = '<div class="empty"><div class="ei">🔍</div>No defects match current filters</div>';
+    return;
+  }
+  el.innerHTML = visible.map(d => {
+    const color  = CLS_COLOR[d.class_name] || '#94a3b8';
+    const panel  = d.layout_mapping?.matched_panel_id || '';
+    const hasImg = d.source_images?.length > 0;
+    return `
+      <div class="d-item ${d.defect_id === selDefectId ? 'sel' : ''}" id="di-${d.defect_id}">
+        <div class="cls-dot" style="background:${color}"></div>
+        <span class="d-id" onclick="flyTo('${d.defect_id}')" style="cursor:pointer">${d.defect_id}</span>
+        <span class="d-cls" onclick="flyTo('${d.defect_id}')" style="cursor:pointer">${d.class_name.replace(/_/g,' ')}</span>
+        <span class="d-cf">${(d.confidence*100).toFixed(0)}%</span>
+        ${hasImg
+          ? `<span style="cursor:pointer;font-size:.82rem" title="View image" onclick="openImgModal('${d.defect_id}',0)">🖼</span>`
+          : '<span style="width:16px"></span>'}
+        <span class="d-pan" title="${panel}">${panel || '—'}</span>
+      </div>`;
+  }).join('');
+}
+
+function flyTo(defectId) {
+  const d = defects.find(x => x.defect_id === defectId);
+  if (!d) return;
+  const { latitude: lat, longitude: lon } = d.estimated_coordinates;
+  map.flyTo({ center: [lon, lat], zoom: 20, speed: 1.5, curve: 1 });
+  selectDefect(defectId);
+  new maplibregl.Popup({ maxWidth: '280px', offset: 10 })
+    .setLngLat([lon, lat]).setHTML(buildDefectPopup(d)).addTo(map);
+}
+
+function selectDefect(defectId) {
+  selDefectId = defectId;
+  renderList();
+  setTimeout(() => {
+    const el = document.getElementById(`di-${defectId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 80);
+}
+
+/* ── Export ─────────────────────────────────────────────────────────────────── */
+function exportJSON() {
+  if (!defects.length) { toast('No data to export', 'err'); return; }
+  dl(new Blob([JSON.stringify({ scan_id: scanId, defects }, null, 2)], { type: 'application/json' }), `autothermo_${scanId||'results'}.json`);
+}
+
+function exportCSV() {
+  if (!defects.length) { toast('No data to export', 'err'); return; }
+  const HDR = ['defect_id','class_name','confidence','frames_tracked','latitude','longitude','altitude_m','panel_id','dist_to_panel_m'];
+  const rows = defects.map(d => [
+    d.defect_id, d.class_name, d.confidence, d.frames_tracked,
+    d.estimated_coordinates?.latitude, d.estimated_coordinates?.longitude,
+    d.estimated_coordinates?.quadcopter_height_m,
+    d.layout_mapping?.matched_panel_id || '',
+    d.layout_mapping?.distance_to_panel_center_m || '',
+  ]);
+  dl(new Blob([[HDR, ...rows].map(r => r.join(',')).join('\n')], { type: 'text/csv' }), `autothermo_${scanId||'results'}.csv`);
+}
+
+function dl(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`Exported ${name}`, 'ok');
+}
+
+/* ── Image footprints ───────────────────────────────────────────────────────── */
+let footprintsLoaded = false;
+
+async function toggleFootprints(on) {
+  toggleLayer(['footprints-fill', 'footprints-line'], on);
+  if (on && !footprintsLoaded) await loadFootprints();
+}
+
+async function loadFootprints() {
+  const path = document.getElementById('scan-path').value.trim();
+  if (!path) { toast('Set an image directory path first', 'err'); return; }
+  document.getElementById('fp-loading').style.display = '';
+  document.getElementById('fp-count').style.display   = 'none';
+  try {
+    const r = await fetch(`${API}/footprints?path=${encodeURIComponent(path)}`);
+    if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.detail || r.statusText); }
+    const gj = await r.json();
+    if (_mapReady) map.getSource('footprints').setData(gj);
+    footprintsLoaded = true;
+    const cnt = gj.total ?? gj.features?.length ?? 0;
+    document.getElementById('fp-count').textContent = `${cnt} images`;
+    document.getElementById('fp-count').style.display = '';
+    toast(`${cnt} image footprints loaded`, 'ok');
+  } catch (e) {
+    toast('Footprints failed: ' + e.message, 'err', 7000);
+    document.getElementById('lyr-footprints').checked = false;
+    toggleLayer(['footprints-fill', 'footprints-line'], false);
+  } finally {
+    document.getElementById('fp-loading').style.display = 'none';
+  }
+}
+
+document.getElementById('scan-path').addEventListener('input', () => {
+  footprintsLoaded = false;
+  if (_mapReady) map.getSource('footprints').setData(EMPTY_GJ);
+  document.getElementById('fp-count').style.display = 'none';
+  if (document.getElementById('lyr-footprints').checked) loadFootprints();
+});
+
+/* ── Plant layout (ITS zones from DWF) ─────────────────────────────────────── */
+async function loadPlantLayout() {
+  try {
+    const r = await fetch(`${API}/plant/geojson`);
+    if (!r.ok) return;
+    const gj = await r.json();
+    renderPlantZones(gj);
+  } catch (_) {}
+}
+
+function renderPlantZones(gj) {
+  /* Inject per-feature color into properties so MapLibre data-driven styling works */
+  const modified = {
+    ...gj,
+    features: gj.features.map(f => {
+      const p = f.properties || {};
+      let color = '#6366f1';
+      if (p.feature_type === 'zone' || p.feature_type === 'label') {
+        const num = parseInt(((p.name || '').match(/\d+/) || ['0'])[0]) - 1;
+        color = ITS_COLORS[Math.max(0, num) % ITS_COLORS.length];
+      }
+      return { ...f, properties: { ...p, color } };
+    }),
+  };
+
+  if (_mapReady) {
+    map.getSource('plant').setData(modified);
+    const zones = modified.features.filter(f => f.properties.feature_type === 'zone');
+    const b = gjBounds(zones);
+    if (b) map.fitBounds(b, { padding: 50 });
+  }
+
+  const dcs = modified.features.filter(f => f.properties.feature_type === 'dc_combiner');
+  toast(`Plant loaded — 20 ITS zones · ${dcs.length} DC combiners`, 'ok');
+}
+
+/* ── Image modal ────────────────────────────────────────────────────────────── */
+let _imgDefectId = null, _imgSourceIdx = 0;
+
+function openImgModal(defectId, imgIdx) {
+  const d = defects.find(x => x.defect_id === defectId);
+  if (!d || !d.source_images?.length) return;
+  _imgDefectId  = defectId;
+  _imgSourceIdx = imgIdx ?? 0;
+  document.getElementById('img-modal').classList.add('on');
+  _renderModalImage(d, _imgSourceIdx);
+}
+
+function closeImgModal() {
+  document.getElementById('img-modal').classList.remove('on');
+  document.getElementById('img-modal-img').src = '';
+}
+
+function _renderModalImage(d, idx) {
+  const images  = d.source_images || [];
+  const imgPath = images[idx] || images[0];
+  const [x1, y1, x2, y2] = d.bbox_avg || [0, 0, 0, 0];
+  const params = new URLSearchParams({ path: imgPath, x1, y1, x2, y2, cls: d.class_name, conf: d.confidence });
+
+  document.getElementById('img-modal-title').textContent =
+    `${d.defect_id} — ${d.class_name.replace(/_/g,' ')} (${(d.confidence*100).toFixed(0)}%)`;
+  document.getElementById('img-modal-img').src = `${API}/image?${params}`;
+
+  const panel = d.layout_mapping?.matched_panel_id || '—';
+  const dist  = d.layout_mapping?.distance_to_panel_center_m?.toFixed(2) ?? '—';
+  const clr   = CLS_COLOR[d.class_name] || '#94a3b8';
+  document.getElementById('img-modal-meta').innerHTML = `
+    <span class="mm-badge" style="background:${clr}">${d.class_name.replace(/_/g,' ')}</span>
+    <div class="mm-key">Defect ID</div>      <div class="mm-val">${d.defect_id}</div>
+    <div class="mm-key">Confidence</div>     <div class="mm-val">${(d.confidence*100).toFixed(1)}%</div>
+    <div class="mm-key">Frames tracked</div> <div class="mm-val">${d.frames_tracked}</div>
+    <div class="mm-key">Panel ID</div>       <div class="mm-val">${panel}</div>
+    <div class="mm-key">Dist. to panel</div> <div class="mm-val">${dist} m</div>
+    <div class="mm-key">Altitude</div>       <div class="mm-val">${d.estimated_coordinates?.quadcopter_height_m?.toFixed(1)} m</div>
+    <div class="mm-key">GPS</div>            <div class="mm-val">${d.estimated_coordinates?.latitude?.toFixed(6)}, ${d.estimated_coordinates?.longitude?.toFixed(6)}</div>
+    <div class="mm-key">Image (${idx+1}/${images.length})</div>
+    <div class="mm-val" style="word-break:break-all">${imgPath.split(/[\\/]/).pop()}</div>
+    <div class="img-nav">
+      <button class="btn btn-sm" onclick="_stepImg(-1)" ${idx===0?'disabled':''}>◀ Prev</button>
+      <button class="btn btn-sm" onclick="_stepImg(1)"  ${idx>=images.length-1?'disabled':''}>Next ▶</button>
+    </div>`;
+}
+
+function _stepImg(delta) {
+  const d = defects.find(x => x.defect_id === _imgDefectId);
+  if (!d) return;
+  _imgSourceIdx = Math.max(0, Math.min((d.source_images||[]).length - 1, _imgSourceIdx + delta));
+  _renderModalImage(d, _imgSourceIdx);
+}
+
+/* ── Collapsible cards ───────────────────────────────────────────────────────── */
+function toggleCard(hd) {
+  hd.closest('.card').classList.toggle('collapsed');
+}
+
+/* ── Auto-center map on plant GPS ────────────────────────────────────────────── */
+async function autoCenter() {
+  const path = document.getElementById('scan-path').value.trim() || 'data/SP3/2026_05_13';
+  try {
+    const r = await fetch(`${API}/center?path=${encodeURIComponent(path)}`);
+    if (!r.ok) return;
+    const { latitude, longitude } = await r.json();
+    map.flyTo({ center: [longitude, latitude], zoom: 19, speed: 1.4, curve: 1.2 });
+  } catch (_) {}
+}
+
+/* Update auto-center when path input changes */
+document.getElementById('scan-path').addEventListener('change', () => autoCenter());
+
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('img-modal').classList.contains('on')) return;
+  if (e.key === 'Escape')     closeImgModal();
+  if (e.key === 'ArrowRight') _stepImg(1);
+  if (e.key === 'ArrowLeft')  _stepImg(-1);
+});
+</script>
+</body>
+</html>
